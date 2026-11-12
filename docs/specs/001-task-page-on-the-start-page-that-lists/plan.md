@@ -24,6 +24,7 @@ tasks:
     covers: [AC-001.1, AC-001.2, AC-001.5]
     parallel_safe: true
     depends_on: [t1, t2]
+    done: true
 ---
 
 # Plan — 001 Task page on the start page
