@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 type Task = { id: string; title: string; due_date: string | null };
@@ -69,6 +69,8 @@ describe("HomePage task list", () => {
     expect(screen.queryByRole("list", { name: "Tasks" })).not.toBeInTheDocument();
     expect(titleField()).toHaveAttribute("type", "text");
     expect(dueField()).toHaveAttribute("type", "date");
+    expect(dueField()).not.toHaveAttribute("min");
+    expect(dueField()).not.toBeRequired();
     expect(within(form()).getByRole("button", { name: "Add task" })).toBeInTheDocument();
   });
 });
@@ -138,7 +140,6 @@ describe("HomePage create form", () => {
     ["503", () => json(503, {})],
     ["200 instead of 201", () => json(200, { id: "x", title: "Buy milk", due_date: null })],
     ["network error", () => Promise.reject(new TypeError("fetch failed"))],
-    ["timeout", () => Promise.reject(new DOMException("timed out", "TimeoutError"))],
   ])("AC-001.6 shows the save error and keeps values when POST fails with %s", async (_name, onPost) => {
     stubApi((_url, init) => (init?.method === "POST" ? (onPost() as Promise<Response>) : json(200, [A])));
     await openPage();
@@ -152,12 +153,77 @@ describe("HomePage create form", () => {
   });
 });
 
+describe("HomePage 5 second limit", () => {
+  const SAVE_ERROR = "Task could not be saved. Try again.";
+  const LOAD_ERROR = "Tasks could not be loaded. Try again later.";
+
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    // Node's AbortSignal.timeout ignores fake timers: route it through setTimeout, keeping the requested ms.
+    vi.spyOn(AbortSignal, "timeout").mockImplementation((ms: number) => {
+      const controller = new AbortController();
+      setTimeout(() => controller.abort(new DOMException("timed out", "TimeoutError")), ms);
+      return controller.signal;
+    });
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  // Never answers; rejects only when the request's signal aborts.
+  const hang = (init?: RequestInit) =>
+    new Promise<Response>((_resolve, reject) => {
+      const signal = init?.signal;
+      if (!signal) return;
+      const abort = () => reject(signal.reason);
+      if (signal.aborted) abort();
+      else signal.addEventListener("abort", abort);
+    });
+
+  it("AC-001.6 shows the save error only after 5 seconds without an answer to POST", async () => {
+    stubApi((_url, init) => (init?.method === "POST" ? hang(init) : json(200, [A])));
+    await openPage();
+    fill("Buy milk", "2026-12-01");
+    submit();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(4900);
+    });
+    expect(posts()).toHaveLength(1);
+    expect(screen.queryByText(SAVE_ERROR)).not.toBeInTheDocument();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(200);
+    });
+    expect(screen.getByText(SAVE_ERROR)).toBeInTheDocument();
+    expect(titleField().value).toBe("Buy milk");
+    expect(dueField().value).toBe("2026-12-01");
+    expect(items()).toHaveLength(1);
+    expect(items()[0]).toHaveTextContent("Task A");
+  });
+
+  it("AC-001.5 shows the load error only after 5 seconds without an answer to GET", async () => {
+    stubApi((_url, init) => hang(init));
+    const { default: HomePage } = await import("@/app/page");
+    let settled = false;
+    const pending = HomePage().then((el) => {
+      settled = true;
+      return el;
+    });
+    await vi.advanceTimersByTimeAsync(4900);
+    expect(settled).toBe(false);
+    await vi.advanceTimersByTimeAsync(200);
+    render(await pending);
+    expect(screen.getByText(LOAD_ERROR)).toBeInTheDocument();
+    expect(screen.queryByRole("list", { name: "Tasks" })).not.toBeInTheDocument();
+    expect(titleField()).toBeInTheDocument();
+  });
+});
+
 describe("HomePage when the Task API is down", () => {
   it.each([
     ["status 500", () => json(500, {})],
     ["status 404", () => json(404, {})],
     ["network error", () => Promise.reject(new TypeError("fetch failed"))],
-    ["timeout", () => Promise.reject(new DOMException("timed out", "TimeoutError"))],
   ])("AC-001.5 shows the load error and still the form on %s", async (_name, onGet) => {
     stubApi(() => onGet() as Promise<Response>);
     await openPage();
