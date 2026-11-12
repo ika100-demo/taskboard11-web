@@ -1,7 +1,7 @@
 ---
 spec_id: 001-task-page-on-the-start-page-that-lists
 title: Task page on the start page that lists tasks and creates them through the Task API
-status: building
+status: done
 priority: P1
 shape: web-nextjs
 parent: ika100-demo/taskboard11-gitops:001-persistent-tasks-with-web-ui
@@ -111,3 +111,4 @@ The smoke test that creates a task is tagged @smoke @writes (dev only); keep a r
 - 2026-11-12 created from the system plan, with its criteria (spec 147)
 - 2026-11-12 approved
 - 2026-11-12 building
+- 2026-11-12 done
